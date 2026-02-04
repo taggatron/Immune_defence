@@ -437,6 +437,7 @@
                 this.attachedAntibodies = [];
                 this.isNeutralized = false;
                 this.isAgglutinated = false;
+                this.wasAgglutinated = false;
                 this.neutralizedTimer = 0; // Timer for text display
                 this.beingEaten = false;
                 this.type = Math.random() > 0.8 ? 'virus' : 'bacteria';
@@ -521,16 +522,17 @@
                                 } else {
                                     // Touching - Clumping
                                     this.isAgglutinated = true;
-                                    // Force them to stick together perfectly by averaging positions slightly or effectively stopping relative motion
-                                    // For now, snap physics is handled by them pushing into each other, but let's add visual feedback
-                                    if (Math.random() < 0.05) { 
-                                         entities.texts.push(new FloatingText((this.pos.x + other.pos.x)/2, (this.pos.y + other.pos.y)/2, "AGGLUTINATED", "#fbbf24"));
-                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                // Check for Agglutination State Change (Event)
+                if (this.isAgglutinated && !this.wasAgglutinated) {
+                     entities.texts.push(new FloatingText(this.pos.x, this.pos.y - 20 * CONFIG.scale, "AGGLUTINATED", "#fbbf24"));
+                }
+                this.wasAgglutinated = this.isAgglutinated;
 
                 // Dodge Logic (only if not neutralised/clumping)
                 if (this.attachedAntibodies.length === 0) {
@@ -828,11 +830,33 @@
                 ctx.closePath();
                 ctx.fill();
 
-                // Nucleus
+                // Nucleus (Lobed / Segmented)
                 ctx.fillStyle = '#a855f7';
+                ctx.strokeStyle = '#a855f7';
+                const s = CONFIG.scale;
+                
+                // Define Lobes
+                const lobes = [
+                    {x: -6*s, y: -5*s, r: 5*s},
+                    {x: 6*s, y: -3*s, r: 6*s},
+                    {x: 0, y: 7*s, r: 5*s}
+                ];
+
+                // Draw Connecting Rectangles (using thick lines)
+                ctx.lineWidth = 4 * s;
+                ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.arc(5 * CONFIG.scale, -5 * CONFIG.scale, 8 * CONFIG.scale, 0, Math.PI*2);
-                ctx.fill();
+                ctx.moveTo(lobes[0].x, lobes[0].y);
+                ctx.lineTo(lobes[1].x, lobes[1].y);
+                ctx.lineTo(lobes[2].x, lobes[2].y);
+                ctx.stroke();
+
+                // Draw Lobes
+                lobes.forEach(lobe => {
+                    ctx.beginPath();
+                    ctx.arc(lobe.x, lobe.y, lobe.r, 0, Math.PI*2);
+                    ctx.fill();
+                });
 
                 ctx.restore();
             }
