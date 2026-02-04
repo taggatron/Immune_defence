@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Immune Defense: Agglutination Update</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #2a0a0a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .hud-panel {
+            pointer-events: auto;
+        }
+        
+        @keyframes alarmPulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+            70% { box-shadow: 0 0 0 20px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+        
+        .sepsis-warning {
+            animation: alarmPulse 1s infinite;
+            border: 2px solid #ef4444;
+            background: rgba(127, 29, 29, 0.8) !important;
+        }
+
+        .weapon-btn {
+            background: rgba(20, 20, 20, 0.8);
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(4px);
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .weapon-btn.active {
+            border-color: #fbbf24;
+            background: rgba(40, 40, 40, 0.95);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 0 15px rgba(251, 191, 36, 0.3);
+        }
+        
+        .weapon-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Complement Button Specifics */
+        .complement-btn {
+            border-color: #3b82f6;
+        }
+        .complement-btn.charged {
+            box-shadow: 0 0 20px #3b82f6;
+            animation: pulse-blue 2s infinite;
+        }
+        .complement-btn:disabled {
+            opacity: 0.5;
+            transform: none;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 10px #3b82f6; border-color: #60a5fa; }
+            50% { box-shadow: 0 0 25px #3b82f6; border-color: #ffffff; }
+            100% { box-shadow: 0 0 10px #3b82f6; border-color: #60a5fa; }
+        }
+
+        .ammo-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: #c084fc;
+            box-shadow: 0 0 4px #c084fc;
+            transition: all 0.2s;
+        }
+        .ammo-dot.spent {
+            background-color: #374151;
+            box-shadow: none;
+        }
+
+        .reloading-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ef4444;
+            font-size: 10px;
+            font-weight: bold;
+            flex-direction: column;
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Overlays -->
+    <div id="sepsis-overlay" class="pointer-events-none fixed inset-0 z-0 opacity-0 transition-opacity duration-500 bg-red-900/20 mix-blend-overlay"></div>
+    
+    <!-- Complement Flash -->
+    <div id="complement-flash" class="pointer-events-none fixed inset-0 z-50 bg-cyan-100 opacity-0 transition-opacity duration-300 mix-blend-overlay"></div>
+
+    <div id="ui-layer" class="flex flex-col justify-between p-4">
+        
+        <!-- Top HUD -->
+        <div class="flex justify-between items-start w-full">
+            <!-- Infection Meter -->
+            <div id="infection-panel" class="hud-panel bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/10 text-white min-w-[180px] shadow-lg">
+                <div class="flex justify-between items-baseline mb-1">
+                    <span class="text-xs text-gray-400 uppercase tracking-widest font-bold">Infection Level</span>
+                    <span id="infection-percent" class="text-xs font-mono font-bold">0%</span>
+                </div>
+                <div class="w-full bg-gray-900 h-3 rounded-full overflow-hidden border border-gray-700 relative shadow-inner">
+                    <div id="infection-bar" class="h-full bg-gradient-to-r from-green-500 to-green-400 w-0 transition-all duration-300"></div>
+                </div>
+                <div id="status-text" class="text-xs mt-2 text-right font-mono tracking-wider text-green-400 font-bold">SYSTEM STABLE</div>
+            </div>
+
+            <div class="flex flex-col items-end gap-2">
+                <!-- Score -->
+                <div class="hud-panel bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/10 text-white text-right shadow-lg">
+                    <div class="text-xs text-gray-400 uppercase tracking-widest mb-1 font-bold">Score</div>
+                    <div id="score-display" class="text-3xl font-bold font-mono text-white tracking-tight drop-shadow-md">0</div>
+                </div>
+
+                <!-- Vaccine Active Indicator -->
+                <div id="vaccine-indicator" class="hidden hud-panel bg-blue-900/80 backdrop-blur-md p-2 rounded-lg border border-blue-400/50 text-white text-right shadow-lg w-full">
+                    <div class="text-[10px] text-blue-200 uppercase tracking-widest mb-1 font-bold animate-pulse">Vaccine Active</div>
+                    <div class="w-full bg-blue-950 h-1.5 rounded-full overflow-hidden">
+                        <div id="vaccine-bar" class="h-full bg-blue-400 w-full"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Body Temp (Left) -->
+        <div class="absolute left-4 top-1/2 transform -translate-y-1/2 hud-panel flex flex-col items-center pointer-events-none opacity-90">
+            <div class="relative w-20 h-40 bg-black/60 backdrop-blur-md rounded-2xl border border-white/10 p-2 flex items-center justify-center shadow-xl">
+                <svg viewBox="0 0 100 200" class="w-full h-full drop-shadow-lg">
+                    <defs>
+                        <linearGradient id="bodyGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+                            <stop offset="0%" style="stop-color:rgb(30,58,138);stop-opacity:1" />
+                            <stop id="temp-stop" offset="30%" style="stop-color:rgb(16,185,129);stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:rgb(239,68,68);stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
+                    <path d="M50 10 C 60 10 65 15 65 25 C 65 30 62 33 60 35 L 75 45 L 85 90 L 75 100 L 60 90 L 60 140 L 70 190 L 55 195 L 50 150 L 45 195 L 30 190 L 40 140 L 40 90 L 25 100 L 15 90 L 25 45 L 40 35 C 38 33 35 30 35 25 C 35 15 40 10 50 10" 
+                          fill="url(#bodyGradient)" stroke="rgba(255,255,255,0.3)" stroke-width="2" />
+                </svg>
+                <div class="absolute bottom-2 bg-black/80 px-2 py-0.5 rounded text-white font-mono text-xs border border-white/10">
+                    <span id="temp-display">37.0</span>°C
+                </div>
+            </div>
+        </div>
+
+        <!-- Sepsis Alert Text -->
+        <div id="sepsis-text" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl font-black text-red-600 tracking-tighter z-0 opacity-50 select-none animate-pulse">
+            SEPSIS
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="w-full relative h-24 pointer-events-none">
+             <!-- Weapon Buttons (Right Aligned) -->
+             <div class="absolute bottom-0 right-0 hud-panel flex gap-3 pointer-events-auto pb-4 pr-2 items-end">
+                
+                <!-- Complement System Button -->
+                <button id="btn-complement" class="complement-btn weapon-btn group relative flex flex-col items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-full overflow-hidden mr-4 mb-2" onclick="activateComplement()" disabled>
+                    <div class="absolute inset-0 bg-blue-900/40"></div>
+                    <!-- Charge Level -->
+                    <div id="complement-fill" class="absolute bottom-0 left-0 right-0 bg-blue-500/80 transition-all duration-300" style="height: 0%"></div>
+                    
+                    <div class="relative z-10 text-white font-bold text-xs uppercase tracking-tighter text-center">
+                        <div>COMPL</div>
+                        <div class="text-[9px] opacity-75">SYS</div>
+                    </div>
+                    <!-- Risk Warning -->
+                    <div class="absolute -top-8 right-0 text-[9px] text-red-400 bg-black/80 px-1 rounded hidden group-hover:block whitespace-nowrap">
+                        Warning: Heat Spike
+                    </div>
+                </button>
+
+                <button id="btn-antibody" class="weapon-btn active group relative flex flex-col items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-2xl overflow-hidden" onclick="setWeapon('antibody')">
+                    <div class="absolute inset-0 bg-cyan-900/20 group-hover:bg-cyan-900/40 transition-colors"></div>
+                    <div class="text-xl md:text-2xl mb-1 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]">Y</div>
+                    <span class="text-[9px] md:text-[10px] text-gray-200 font-bold uppercase tracking-wider relative z-10">Antibody</span>
+                    <span class="text-[8px] md:text-[9px] text-cyan-400 relative z-10">AUTO</span>
+                </button>
+                
+                <button id="btn-igm" class="weapon-btn group relative flex flex-col items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-2xl overflow-hidden" onclick="setWeapon('igm')">
+                    <div class="absolute inset-0 bg-cyan-900/20 group-hover:bg-cyan-900/40 transition-colors"></div>
+                    <div class="text-xl md:text-2xl mb-1 text-cyan-200 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]">۞</div>
+                    <span class="text-[9px] md:text-[10px] text-gray-200 font-bold uppercase tracking-wider relative z-10">IgM</span>
+                    <span class="text-[8px] md:text-[9px] text-cyan-400 relative z-10">COMPLEX</span>
+                    
+                    <!-- Ammo Container -->
+                    <div id="igm-ammo" class="flex gap-1 mt-1 relative z-10">
+                        <div class="ammo-dot bg-cyan-400 shadow-cyan-400"></div><div class="ammo-dot bg-cyan-400 shadow-cyan-400"></div><div class="ammo-dot bg-cyan-400 shadow-cyan-400"></div><div class="ammo-dot bg-cyan-400 shadow-cyan-400"></div><div class="ammo-dot bg-cyan-400 shadow-cyan-400"></div>
+                    </div>
+
+                    <!-- Reload Overlay -->
+                    <div id="reload-overlay" class="hidden reloading-overlay">
+                        <span>RELOAD</span>
+                        <div class="w-8 h-1 bg-gray-700 rounded-full mt-1 overflow-hidden">
+                            <div id="reload-bar" class="h-full bg-cyan-500 w-0"></div>
+                        </div>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div id="game-over-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-lg">
+        <div class="bg-gray-900 border border-red-900/50 rounded-3xl p-8 max-w-md w-full text-center shadow-[0_0_100px_rgba(220,38,38,0.3)] m-4 relative overflow-hidden">
+            <div class="absolute inset-0 bg-gradient-to-b from-red-900/20 to-transparent pointer-events-none"></div>
+            <h1 class="text-5xl font-black text-red-500 mb-2 uppercase tracking-tighter drop-shadow-lg">TERMINATED</h1>
+            <p class="text-gray-400 mb-8 font-light">Host organism ceased vital functions.</p>
+            
+            <div class="mb-8">
+                <div class="text-sm text-gray-500 uppercase tracking-widest mb-1">Final Score</div>
+                <div class="text-6xl font-mono text-white font-bold" id="final-score">0</div>
+            </div>
+            
+            <button onclick="resetGame()" class="relative w-full py-4 bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-bold rounded-xl uppercase tracking-widest transition-all transform hover:scale-[1.02] shadow-lg border border-red-400/20">
+                Reboot System
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game State
+        let gameActive = false;
+        let score = 0;
+        let infection = 0; 
+        let temp = 37.0;
+        let lastTime = 0;
+        let selectedWeapon = 'antibody'; 
+        let aimAngle = -Math.PI / 2;
+        let mousePos = { x: 0, y: 0 };
+        let isSepsis = false;
+        let isMouseDown = false;
+        
+        // Weapon State
+        const MAX_PHAGOCYTE_AMMO = 5;
+        let igmAmmo = MAX_PHAGOCYTE_AMMO;
+        let isReloading = false;
+        let currentReloadTime = 0;
+
+        // Special Systems
+        let rapidFireActive = false;
+        let rapidFireTimer = 0;
+        let lastRapidShot = 0;
+        
+        let complementCharge = 0; // 0 to 100
+        let tempHeatSpike = 0; // Temporary heat added by abilities
+        
+        // Entities
+        let entities = {
+            rbcs: [], 
+            pathogens: [],
+            projectiles: [],
+            particles: [],
+            vaccines: [],
+            texts: [],
+            phagocytes: []
+        };
+
+        const CONFIG = {
+            spawnRate: 2000,
+            spawnDecrease: 0.99,
+            minSpawnRate: 400,
+            bgRbcCount: 25,
+            infectionPerPathogenEscaped: 15,
+            recoveryPerKill: 0.5,
+            criticalTemp: 42.0,
+            sepsisThreshold: 80,
+            width: window.innerWidth,
+            height: window.innerHeight,
+            reloadDuration: 2500,
+            vaccineDuration: 8000,
+            vaccineSpawnRate: 0.0005,
+            complementChargeRate: 5, // per second
+            complementHeatCost: 2.0, // Degrees added instantly
+            agglutinationThreshold: 3 // Antibodies needed to clump
+        };
+
+        let currentSpawnRate = CONFIG.spawnRate;
+        let spawnTimer = 0;
+
+        // --- Classes ---
+
+        class Vector {
+            constructor(x, y) { this.x = x; this.y = y; }
+        }
+
+        class FloatingText {
+            constructor(x, y, text, color = '#fff') {
+                this.pos = new Vector(x, y);
+                this.text = text;
+                this.color = color;
+                this.life = 1.5;
+                this.velY = -30;
+            }
+            update(dt) {
+                this.pos.y += this.velY * dt;
+                this.life -= dt;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = this.color;
+                ctx.font = 'bold 16px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.text, this.pos.x, this.pos.y);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        class Entity {
+            constructor(x, y) {
+                this.pos = new Vector(x, y);
+                this.vel = new Vector(0, 0);
+                this.radius = 10;
+                this.markedForDeletion = false;
+                this.angle = 0;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.05;
+            }
+            update(dt) {
+                this.pos.x += this.vel.x * dt;
+                this.pos.y += this.vel.y * dt;
+                this.angle += this.rotationSpeed;
+            }
+        }
+
+        class RBC extends Entity {
+            constructor() {
+                super(Math.random() * CONFIG.width, Math.random() * CONFIG.height);
+                this.radius = 20 + Math.random() * 30;
+                this.vel.x = -0.2 - Math.random() * 0.8; 
+                this.opacity = 0.1 + Math.random() * 0.2;
+            }
+            update(dt) {
+                this.pos.x += this.vel.x; 
+                if (this.pos.x < -this.radius * 2) {
+                    this.pos.x = CONFIG.width + this.radius * 2;
+                    this.pos.y = Math.random() * CONFIG.height;
+                }
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.globalAlpha = this.opacity;
+                let grad = ctx.createRadialGradient(0,0, this.radius*0.4, 0,0, this.radius);
+                grad.addColorStop(0, '#500000');
+                grad.addColorStop(1, '#8a0000');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.radius, this.radius * 0.85, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = this.opacity + 0.1;
+                ctx.fillStyle = '#300000';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.radius * 0.4, this.radius * 0.35, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Vaccine extends Entity {
+            constructor() {
+                super(CONFIG.width + 50, Math.random() * (CONFIG.height - 150) + 50);
+                this.radius = 20;
+                this.vel.x = -100;
+                this.vel.y = Math.sin(Math.random() * 10) * 20;
+                this.bobOffset = Math.random() * 10;
+            }
+            update(dt) {
+                this.pos.x += this.vel.x * dt;
+                this.pos.y += Math.sin(Date.now() / 500 + this.bobOffset) * 0.5; 
+                this.angle += dt;
+                if(this.pos.x < -50) this.markedForDeletion = true;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.rotate(Math.PI / 4);
+                ctx.shadowBlur = 20; ctx.shadowColor = '#3b82f6';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(-10, -20, 20, 40);
+                ctx.fillStyle = '#3b82f6'; ctx.fillRect(-8, 0, 16, 18);
+                ctx.fillStyle = '#9ca3af'; ctx.fillRect(-12, -24, 24, 6);
+                ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(-6, -18, 4, 30);
+                ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('+', 0, 10);
+                ctx.restore();
+            }
+        }
+
+        class Pathogen extends Entity {
+            constructor() {
+                super(CONFIG.width + 50, Math.random() * (CONFIG.height - 100));
+                this.radius = 18;
+                this.baseSpeed = 70 + Math.random() * 50;
+                if(isSepsis) this.baseSpeed *= 1.3; 
+                
+                this.vel.x = -this.baseSpeed;
+                this.color = '#34d399'; 
+                this.glowColor = '#059669';
+                this.spikes = 7 + Math.floor(Math.random() * 4);
+                this.attachedAntibodies = [];
+                this.isNeutralized = false;
+                this.neutralizedTimer = 0; // Timer for text display
+                this.beingEaten = false;
+                this.type = Math.random() > 0.8 ? 'virus' : 'bacteria';
+                this.frozen = false;
+                this.frozenTimer = 0;
+                
+                if (this.type === 'virus') {
+                    this.color = '#a78bfa'; 
+                    this.glowColor = '#7c3aed';
+                    this.baseSpeed += 30;
+                    this.vel.x = -this.baseSpeed;
+                    this.radius = 13;
+                    this.spikes = 10;
+                }
+            }
+
+            freeze() {
+                this.frozen = true;
+                this.frozenTimer = 5.0; // 5 seconds
+                this.vel.x = 0;
+                this.vel.y = 0;
+            }
+
+            update(dt, allPathogens) {
+                if (this.beingEaten) {
+                    this.radius *= 0.95; // Shrink effect
+                    if (this.radius < 1) this.markedForDeletion = true;
+                    return;
+                }
+
+                if (this.frozen) {
+                    this.frozenTimer -= dt;
+                    if (this.frozenTimer <= 0) {
+                        this.frozen = false;
+                        this.vel.x = -this.baseSpeed;
+                    }
+                    // Visual jitter while frozen
+                    this.pos.x += (Math.random() - 0.5) * 2;
+                    return; // Skip normal movement
+                }
+
+                // Check for Agglutination (Clumping) & Neutralization
+                if (this.attachedAntibodies.length >= CONFIG.agglutinationThreshold) {
+                    if (!this.isNeutralized) {
+                        this.neutralizedTimer = 2.0; // Show text for 2 seconds
+
+                        // Spawn a phagocyte if we have fewer than 3 active ones
+                        if (entities.phagocytes.length < 3) {
+                             // Spawn from left side or random valid edge
+                             entities.phagocytes.push(new AutoPhagocyte());
+                        }
+                    }
+                    else { // Is already neutralized, but neutralizedTimer might need refresh?
+                          // No, timer is one-shot on first neutralization. But if we want it to blink or stay, we can tweak.
+                    }
+                    
+                    this.isNeutralized = true; // Ensure state is sticky
+                    
+                    if (this.neutralizedTimer > 0) {
+                        this.neutralizedTimer -= dt;
+                    }
+                    
+                    // Attraction range
+                    const attractionRange = 150;
+                    const attractionForce = 200;
+
+                    for (let other of allPathogens) {
+                        if (other === this) continue;
+                        if (other.attachedAntibodies.length >= CONFIG.agglutinationThreshold) {
+                            const dx = other.pos.x - this.pos.x;
+                            const dy = other.pos.y - this.pos.y;
+                            const distSq = dx*dx + dy*dy;
+                            
+                            if (distSq < attractionRange * attractionRange) {
+                                const dist = Math.sqrt(distSq);
+                                if (dist > this.radius + other.radius + 5) { // Added tolerance
+                                    // Move towards each other
+                                    this.vel.x += (dx / dist) * attractionForce * dt;
+                                    this.vel.y += (dy / dist) * attractionForce * dt;
+                                } else {
+                                    // Touching - Clumping
+                                    // Force them to stick together perfectly by averaging positions slightly or effectively stopping relative motion
+                                    // For now, snap physics is handled by them pushing into each other, but let's add visual feedback
+                                    if (Math.random() < 0.05) { 
+                                         entities.texts.push(new FloatingText((this.pos.x + other.pos.x)/2, (this.pos.y + other.pos.y)/2, "AGGLUTINATED", "#fbbf24"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Dodge Logic (only if not neutralised/clumping)
+                if (this.attachedAntibodies.length === 0) {
+                    const dodgeRange = 300; 
+                    const dodgeSpeed = 600; 
+                    
+                    for (let proj of entities.projectiles) {
+                         const dx = proj.pos.x - this.pos.x;
+                         const dy = proj.pos.y - this.pos.y;
+                         const dist = Math.sqrt(dx*dx + dy*dy);
+                         if (dist < dodgeRange) {
+                             const dodgeDir = this.pos.y < proj.pos.y ? -1 : 1;
+                             this.vel.y += dodgeDir * dodgeSpeed * dt;
+                         }
+                    }
+                }
+
+                this.vel.y *= 0.94; 
+
+                // Slow down from antibodies
+                let speedMod = 1.0;
+                if (this.attachedAntibodies.length > 0) {
+                    speedMod = Math.max(0.05, 1.0 - (this.attachedAntibodies.length * 0.3));
+                    this.vel.y *= 0.5; 
+                }
+                
+                // Only move X if not heavily clumping logic-overridden
+                if (this.attachedAntibodies.length < CONFIG.agglutinationThreshold) {
+                    this.pos.x += this.vel.x * speedMod * dt;
+                } else {
+                     // Agglutination: Dampen horizontal velocity significantly
+                     this.vel.x *= 0.9; 
+                     this.pos.x += this.vel.x * dt - (5 * dt); 
+                }
+                
+                this.pos.y += this.vel.y * speedMod * dt;
+                this.angle += this.rotationSpeed;
+
+                if (this.pos.x < -50) {
+                    this.markedForDeletion = true;
+                    if (!this.isNeutralized) {
+                        addInfection(10);
+                    }
+                }
+                
+                if (this.pos.y < 50) { this.pos.y = 50; this.vel.y += 10; }
+                if (this.pos.y > CONFIG.height - 50) { this.pos.y = CONFIG.height - 50; this.vel.y -= 10; }
+            }
+
+            draw(ctx) {
+                if (this.beingEaten && this.radius < 1) return;
+                
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                
+                if (this.frozen) {
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#3b82f6';
+                } else if (this.isNeutralized) {
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#4ade80'; // Green glow for neutralised
+                } else {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = this.glowColor;
+                }
+
+                ctx.rotate(this.angle);
+                ctx.fillStyle = this.frozen ? '#93c5fd' : (this.isNeutralized ? '#86efac' : this.color); 
+                
+                ctx.beginPath();
+                for (let i = 0; i < this.spikes * 2; i++) {
+                    const r = (i % 2 === 0) ? this.radius : this.radius + (this.type === 'virus' ? 8 : 4);
+                    const a = (Math.PI * 2 * i) / (this.spikes * 2);
+                    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fde047'; 
+                for(let i=0; i<4; i++) {
+                    ctx.beginPath();
+                    const a = (Math.PI/2) * i;
+                    ctx.arc(Math.cos(a)*this.radius*0.6, Math.sin(a)*this.radius*0.6, 3, 0, Math.PI*2);
+                    ctx.fill();
+                }
+
+                ctx.restore(); 
+                
+                // Draw Neutralised Text
+                if (this.isNeutralized && this.neutralizedTimer > 0) {
+                    ctx.save();
+                    ctx.translate(this.pos.x, this.pos.y);
+                    ctx.globalAlpha = Math.min(1, this.neutralizedTimer); // Fade out
+                    ctx.fillStyle = '#4ade80';
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('NEUTRALISED', 0, -this.radius - 10);
+                    ctx.restore();
+                }
+
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.rotate(this.angle);
+                
+                this.attachedAntibodies.forEach((ab, index) => {
+                    ctx.save();
+                    ctx.rotate((Math.PI * 2 / this.attachedAntibodies.length) * index);
+                    ctx.translate(this.radius + 2, 0);
+                    ctx.rotate(Math.PI / 2);
+                    // Blue for normal, Green for neutralised? Keep blue for antibodies
+                    ctx.strokeStyle = '#22d3ee';
+                    ctx.lineWidth = 3;
+                    ctx.shadowBlur = 5;
+                    ctx.shadowColor = '#22d3ee';
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0); ctx.lineTo(0, 10);
+                    ctx.moveTo(0, 0); ctx.lineTo(-5, -6);
+                    ctx.moveTo(0, 0); ctx.lineTo(5, -6);
+                    ctx.stroke();
+                    ctx.restore();
+                });
+                
+                ctx.restore();
+            }
+        }
+
+        class Antibody extends Entity {
+            constructor(x, y, angle) {
+                super(x, y);
+                const speed = 900;
+                this.vel.x = Math.cos(angle) * speed;
+                this.vel.y = Math.sin(angle) * speed;
+                this.radius = 4;
+                this.rotation = angle + Math.PI / 2;
+                this.life = 1.0; 
+            }
+            update(dt) {
+                super.update(dt);
+                this.life -= dt;
+                if (this.life <= 0) this.markedForDeletion = true;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.rotate(this.rotation);
+                ctx.shadowBlur = 8; ctx.shadowColor = '#22d3ee';
+                ctx.strokeStyle = '#67e8f9'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(0, 6); ctx.lineTo(0, -2);
+                ctx.lineTo(-5, -9); ctx.moveTo(0, -2); ctx.lineTo(5, -9);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        class IgM extends Entity {
+            constructor(x, y, angle) {
+                super(x, y);
+                const speed = 400;
+                this.vel.x = Math.cos(angle) * speed;
+                this.vel.y = Math.sin(angle) * speed;
+                this.radius = 25;
+                this.rotation = angle;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.rotate(this.rotation + Math.min(Date.now() / 1000, 10)); 
+                
+                ctx.strokeStyle = '#a5f3fc'; 
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#06b6d4';
+                
+                // Pentamer shape (5 Ys)
+                for(let i=0; i<5; i++) {
+                    ctx.save();
+                    ctx.rotate((Math.PI * 2 / 5) * i);
+                    ctx.translate(12, 0);
+                    ctx.rotate(Math.PI/2);
+                    // Draw Y
+                    ctx.beginPath();
+                    ctx.moveTo(0, 5); ctx.lineTo(0, -5);
+                    ctx.lineTo(-4, -10); ctx.moveTo(0, -5); ctx.lineTo(4, -10);
+                    ctx.stroke();
+                    // Connector
+                    ctx.beginPath();
+                    ctx.moveTo(0,5); ctx.lineTo(0, 12);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                
+                ctx.beginPath();
+                ctx.arc(0,0, 6, 0, Math.PI*2);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        class AutoPhagocyte extends Entity {
+            constructor() {
+                // Spawn entered from left side off screen
+                super(-50, Math.random() * CONFIG.height);
+                this.radius = 30;
+                this.color = '#e9d5ff';
+                this.baseSpeed = 60; // Slightly faster entrance
+                this.huntSpeed = 180;
+                this.angle = 0; // Move right initially
+                this.target = null;
+                this.digesting = 0; // Timer
+                
+                this.vel.x = Math.cos(this.angle) * this.baseSpeed;
+                this.vel.y = Math.sin(this.angle) * this.baseSpeed;
+            }
+
+            update(dt) {
+                if (this.digesting > 0) {
+                    this.digesting -= dt;
+                    return; // Busy digesting
+                }
+
+                // Find targets (neutralized pathogens)
+                let bestDist = Infinity;
+                let bestTarget = null;
+                
+                // Look for neutralized pathogens first
+                for (let p of entities.pathogens) {
+                    if (p.isNeutralized && !p.beingEaten) {
+                        const dx = p.pos.x - this.pos.x;
+                        const dy = p.pos.y - this.pos.y;
+                        const d = Math.sqrt(dx*dx + dy*dy);
+                        if (d < bestDist) {
+                            bestDist = d;
+                            bestTarget = p;
+                        }
+                    }
+                }
+                
+                this.target = bestTarget;
+
+                if (this.target) {
+                    // Hunt mode - Fast
+                    const dx = this.target.pos.x - this.pos.x;
+                    const dy = this.target.pos.y - this.pos.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist > 0) {
+                        this.vel.x = (dx / dist) * this.huntSpeed;
+                        this.vel.y = (dy / dist) * this.huntSpeed;
+                    }
+                } else {
+                    // Wander logic
+                    if (Math.random() < 0.02) {
+                        this.angle += (Math.random() - 0.5) * 2;
+                        this.vel.x = Math.cos(this.angle) * this.baseSpeed;
+                        this.vel.y = Math.sin(this.angle) * this.baseSpeed;
+                    }
+                    
+                    // Boundary bounce
+                    if (this.pos.x < this.radius) this.vel.x = Math.abs(this.vel.x);
+                    if (this.pos.x > CONFIG.width - this.radius) this.vel.x = -Math.abs(this.vel.x);
+                    if (this.pos.y < this.radius) this.vel.y = Math.abs(this.vel.y);
+                    if (this.pos.y > CONFIG.height - this.radius) this.vel.y = -Math.abs(this.vel.y);
+                }
+
+                this.pos.x += this.vel.x * dt;
+                this.pos.y += this.vel.y * dt;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.pos.x, this.pos.y);
+                
+                // Pulse effect if digesting
+                const pulse = this.digesting > 0 ? Math.sin(Date.now() / 100) * 3 : 0;
+                const color = this.digesting > 0 ? '#d8b4fe' : '#e9d5ff'; 
+
+                ctx.fillStyle = color;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#c084fc';
+                
+                ctx.beginPath();
+                // Amoeba shape
+                const r = this.radius + pulse;
+                for (let i=0; i<Math.PI*2; i+=0.2) {
+                    let offset = Math.sin(i * 5 + Date.now()/500) * 3;
+                    ctx.lineTo(Math.cos(i) * (r + offset), Math.sin(i) * (r + offset));
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                // Nucleus
+                ctx.fillStyle = '#a855f7';
+                ctx.beginPath();
+                ctx.arc(5, -5, 8, 0, Math.PI*2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        class Particle extends Entity {
+            constructor(x, y, color) {
+                super(x, y);
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 20 + Math.random() * 150;
+                this.vel.x = Math.cos(angle) * speed;
+                this.vel.y = Math.sin(angle) * speed;
+                this.life = 0.4 + Math.random() * 0.4;
+                this.color = color;
+                this.radius = 2 + Math.random() * 4;
+            }
+            update(dt) {
+                super.update(dt);
+                this.life -= dt;
+                this.radius *= 0.92;
+                if (this.life <= 0) this.markedForDeletion = true;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.pos.x, this.pos.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // --- Core Functions ---
+
+        function init() {
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+            
+            canvas.addEventListener('pointermove', handleMove);
+            canvas.addEventListener('pointerdown', handleDown);
+            canvas.addEventListener('pointerup', handleUp);
+            canvas.addEventListener('pointerleave', handleUp);
+            window.addEventListener('keydown', handleKey);
+
+            for(let i=0; i<CONFIG.bgRbcCount; i++) {
+                entities.rbcs.push(new RBC());
+            }
+
+            requestAnimationFrame(gameLoop);
+            resetGame();
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            CONFIG.width = canvas.width;
+            CONFIG.height = canvas.height;
+        }
+
+        function resetGame() {
+            document.getElementById('game-over-modal').classList.add('hidden');
+            document.getElementById('sepsis-overlay').classList.remove('opacity-100');
+            document.getElementById('sepsis-overlay').classList.add('opacity-0');
+            document.getElementById('sepsis-text').classList.add('hidden');
+            document.getElementById('infection-panel').classList.remove('sepsis-warning');
+            document.getElementById('vaccine-indicator').classList.add('hidden');
+            
+            gameActive = true;
+            isSepsis = false;
+            score = 0;
+            infection = 0;
+            temp = 37.0;
+            tempHeatSpike = 0;
+            currentSpawnRate = CONFIG.spawnRate;
+            complementCharge = 0;
+            
+            igmAmmo = MAX_PHAGOCYTE_AMMO;
+            isReloading = false;
+            rapidFireActive = false;
+
+            entities.pathogens = [];
+            entities.projectiles = [];
+            entities.particles = [];
+            entities.vaccines = [];
+            entities.texts = [];
+            entities.phagocytes = [];
+            
+            // Spawn initial AutoPhagocytes - Removed, they spawn on demand now
+            // for(let i=0; i<3; i++) {
+            //    entities.phagocytes.push(new AutoPhagocyte());
+            // }
+
+            lastTime = performance.now();
+            updateUI();
+            updateAmmoUI();
+        }
+
+        function handleMove(e) {
+            mousePos.x = e.clientX;
+            mousePos.y = e.clientY;
+            const originX = CONFIG.width / 2;
+            const originY = CONFIG.height + 20; 
+            aimAngle = Math.atan2(mousePos.y - originY, mousePos.x - originX);
+        }
+
+        function handleDown(e) {
+            if (!gameActive) return;
+            handleMove(e);
+            isMouseDown = true;
+            fireWeapon();
+        }
+
+        function handleUp() { isMouseDown = false; }
+
+        function handleKey(e) {
+            if (e.key === '1') setWeapon('antibody');
+            if (e.key === '2') setWeapon('igm');
+            if (e.key === '3') activateComplement();
+        }
+
+        window.activateComplement = function() {
+            if (complementCharge >= 100) {
+                // Trigger Effect
+                entities.pathogens.forEach(p => p.freeze());
+                
+                // Add Risk (Heat)
+                tempHeatSpike += CONFIG.complementHeatCost;
+                
+                // Reset
+                complementCharge = 0;
+                
+                // Visuals
+                const flash = document.getElementById('complement-flash');
+                flash.classList.remove('opacity-0');
+                setTimeout(() => flash.classList.add('opacity-0'), 300);
+                
+                entities.texts.push(new FloatingText(CONFIG.width/2, CONFIG.height/2, "COMPLEMENT ACTIVATED", "#3b82f6"));
+                updateUI();
+            }
+        }
+
+        window.setWeapon = function(type) {
+            selectedWeapon = type;
+            document.querySelectorAll('.weapon-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`btn-${type}`).classList.add('active');
+        }
+
+        function activateRapidFire() {
+            rapidFireActive = true;
+            rapidFireTimer = CONFIG.vaccineDuration;
+            document.getElementById('vaccine-indicator').classList.remove('hidden');
+            setWeapon('antibody');
+        }
+
+        function spawnVaccine() { entities.vaccines.push(new Vaccine()); }
+
+        function startReload() {
+            if (isReloading) return;
+            isReloading = true;
+            currentReloadTime = 0;
+            document.getElementById('reload-overlay').classList.remove('hidden');
+        }
+
+        function fireWeapon(isAuto = false) {
+            const originX = CONFIG.width / 2;
+            const originY = CONFIG.height + 20;
+            const barrelLen = 140; 
+            const spawnX = originX + Math.cos(aimAngle) * barrelLen;
+            const spawnY = originY + Math.sin(aimAngle) * barrelLen;
+
+            if (selectedWeapon === 'antibody') {
+                entities.projectiles.push(new Antibody(spawnX, spawnY, aimAngle));
+                if (!isAuto && !rapidFireActive) {
+                    setTimeout(() => entities.projectiles.push(new Antibody(spawnX, spawnY, aimAngle - 0.08)), 40);
+                    setTimeout(() => entities.projectiles.push(new Antibody(spawnX, spawnY, aimAngle + 0.08)), 80);
+                }
+            } else if (selectedWeapon === 'igm' && !isAuto) {
+                if (isReloading) return;
+                if (igmAmmo > 0) {
+                    entities.projectiles.push(new IgM(spawnX, spawnY, aimAngle));
+                    igmAmmo--;
+                    updateAmmoUI();
+                    if (igmAmmo === 0) startReload();
+                } else {
+                    startReload();
+                }
+            }
+        }
+
+        function updateAmmoUI() {
+            const dots = document.querySelectorAll('.ammo-dot');
+            dots.forEach((dot, index) => {
+                if (index < igmAmmo) {
+                    dot.classList.remove('spent');
+                } else {
+                    dot.classList.add('spent');
+                }
+            });
+            if (!isReloading && igmAmmo > 0) document.getElementById('reload-overlay').classList.add('hidden');
+        }
+
+        function addInfection(amount) {
+            infection = Math.min(100, infection + amount);
+            updateUI();
+        }
+
+        function updateUI() {
+            // Heat calculation with risk spike
+            const baseFever = (infection / 100) * 5;
+            temp = 37.0 + baseFever + tempHeatSpike;
+            
+            document.getElementById('score-display').innerText = score;
+            document.getElementById('temp-display').innerText = temp.toFixed(1);
+            document.getElementById('infection-percent').innerText = Math.floor(infection) + '%';
+            
+            const bar = document.getElementById('infection-bar');
+            bar.style.width = `${infection}%`;
+            
+            // Complement UI
+            const compBtn = document.getElementById('btn-complement');
+            const compFill = document.getElementById('complement-fill');
+            compFill.style.height = `${complementCharge}%`;
+            
+            if (complementCharge >= 100) {
+                compBtn.disabled = false;
+                compBtn.classList.add('charged');
+            } else {
+                compBtn.disabled = true;
+                compBtn.classList.remove('charged');
+            }
+
+            const statusText = document.getElementById('status-text');
+            const panel = document.getElementById('infection-panel');
+            
+            if (infection >= CONFIG.sepsisThreshold && !isSepsis) {
+                isSepsis = true;
+                currentSpawnRate = 300; 
+                document.getElementById('sepsis-overlay').classList.remove('opacity-0');
+                document.getElementById('sepsis-overlay').classList.add('opacity-100');
+                document.getElementById('sepsis-text').classList.remove('hidden');
+                panel.classList.add('sepsis-warning');
+            }
+
+            if (infection < 30) {
+                bar.className = 'h-full bg-gradient-to-r from-green-500 to-green-400';
+                statusText.innerText = 'SYSTEM STABLE';
+                statusText.className = 'text-xs mt-2 text-right font-mono tracking-wider text-green-400 font-bold';
+            } else if (infection < CONFIG.sepsisThreshold) {
+                bar.className = 'h-full bg-gradient-to-r from-yellow-500 to-orange-500';
+                statusText.innerText = 'INFECTION RISING';
+                statusText.className = 'text-xs mt-2 text-right font-mono tracking-wider text-yellow-400 font-bold';
+            } else {
+                bar.className = 'h-full bg-gradient-to-r from-red-600 to-red-500 animate-pulse';
+                statusText.innerText = 'CRITICAL SEPSIS';
+                statusText.className = 'text-xs mt-2 text-right font-mono tracking-wider text-red-500 font-black animate-pulse';
+            }
+
+            const stop = document.getElementById('temp-stop');
+            if(stop) stop.setAttribute('offset', `${100 - infection}%`);
+
+            if (temp >= CONFIG.criticalTemp) {
+                gameOver();
+            }
+        }
+
+        function gameOver() {
+            gameActive = false;
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        function spawnPathogen() { entities.pathogens.push(new Pathogen()); }
+
+        function createExplosion(x, y, color, count) {
+            for(let i=0; i<count; i++) {
+                entities.particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function drawVignette(ctx) {
+            const grad = ctx.createRadialGradient(CONFIG.width/2, CONFIG.height/2, CONFIG.height/3, CONFIG.width/2, CONFIG.height/2, CONFIG.height);
+            grad.addColorStop(0, 'rgba(0,0,0,0)');
+            grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0, CONFIG.width, CONFIG.height);
+        }
+
+        function drawNeedle(ctx) {
+            const centerX = CONFIG.width / 2;
+            const centerY = CONFIG.height + 20;
+
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(aimAngle); 
+
+            // Dimensions
+            const barrelW = 40;
+            const barrelL = 100;
+            const needleL = 60;
+            
+            ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(0,0,0,0.5)';
+
+            // Plunger
+            ctx.fillStyle = '#1f2937'; ctx.fillRect(-15, -barrelW/2 + 5, 20, barrelW - 10);
+            
+            // Glass Barrel
+            ctx.fillStyle = 'rgba(200, 200, 200, 0.2)'; ctx.fillRect(0, -barrelW/2, barrelL, barrelW);
+            
+            // Fluid
+            const fluidColor = selectedWeapon === 'antibody' ? '#06b6d4' : '#06b6d4'; // Both derived from antibodies now
+            let fluidGrad = ctx.createLinearGradient(0, -barrelW/2, 0, barrelW/2);
+            fluidGrad.addColorStop(0, '#000');
+            fluidGrad.addColorStop(0.2, fluidColor);
+            fluidGrad.addColorStop(0.5, '#fff');
+            fluidGrad.addColorStop(0.8, fluidColor);
+            fluidGrad.addColorStop(1, '#000');
+            ctx.fillStyle = fluidGrad;
+            let fluidLevel = barrelL - 10;
+            if (selectedWeapon === 'igm') {
+                fluidLevel = (igmAmmo / MAX_PHAGOCYTE_AMMO) * (barrelL - 10);
+            }
+            ctx.fillRect(5, -barrelW/2 + 4, fluidLevel, barrelW - 8);
+
+            // Highlights
+            ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(0, -barrelW/2, barrelL, barrelW/2);
+            ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 2; ctx.strokeRect(0, -barrelW/2, barrelL, barrelW);
+
+            // Needle Hub & Tip
+            let hubGrad = ctx.createLinearGradient(0, -10, 0, 10);
+            hubGrad.addColorStop(0, '#374151'); hubGrad.addColorStop(0.5, '#9ca3af'); hubGrad.addColorStop(1, '#374151');
+            ctx.fillStyle = hubGrad; ctx.fillRect(barrelL, -10, 10, 20);
+            let needleGrad = ctx.createLinearGradient(0, -3, 0, 3);
+            needleGrad.addColorStop(0, '#4b5563'); needleGrad.addColorStop(0.4, '#e5e7eb'); needleGrad.addColorStop(1, '#4b5563');
+            ctx.fillStyle = needleGrad; ctx.fillRect(barrelL + 10, -3, needleL, 6);
+            ctx.beginPath(); ctx.moveTo(barrelL + 10 + needleL, -3); ctx.lineTo(barrelL + 10 + needleL + 10, 0); ctx.lineTo(barrelL + 10 + needleL, 3); ctx.fill();
+
+            ctx.restore();
+            
+            // Crosshair
+            ctx.save();
+            ctx.translate(mousePos.x, mousePos.y);
+            ctx.strokeStyle = selectedWeapon === 'antibody' ? 'rgba(34, 211, 238, 0.6)' : 'rgba(34, 211, 238, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2);
+            ctx.moveTo(0, -25); ctx.lineTo(0, -15); ctx.moveTo(0, 15); ctx.lineTo(0, 25);
+            ctx.moveTo(-25, 0); ctx.lineTo(-15, 0); ctx.moveTo(15, 0); ctx.lineTo(25, 0);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function gameLoop(timestamp) {
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.1); 
+            lastTime = timestamp;
+
+            if (gameActive) {
+                // Spawning
+                spawnTimer += dt * 1000;
+                let effectiveSpawnRate = isSepsis ? 200 : currentSpawnRate;
+                if (spawnTimer > effectiveSpawnRate) {
+                    spawnPathogen();
+                    spawnTimer = 0;
+                    if(!isSepsis) currentSpawnRate = Math.max(CONFIG.minSpawnRate, currentSpawnRate * CONFIG.spawnDecrease);
+                }
+                if (Math.random() < CONFIG.vaccineSpawnRate) spawnVaccine();
+
+                // Reload
+                if (isReloading) {
+                    currentReloadTime += dt * 1000;
+                    const pct = (currentReloadTime / CONFIG.reloadDuration) * 100;
+                    document.getElementById('reload-bar').style.width = `${pct}%`;
+                    if (currentReloadTime >= CONFIG.reloadDuration) {
+                        isReloading = false;
+                        igmAmmo = MAX_PHAGOCYTE_AMMO;
+                        updateAmmoUI();
+                    }
+                }
+
+                // Rapid Fire
+                if (rapidFireActive) {
+                    rapidFireTimer -= dt * 1000;
+                    const barPct = (rapidFireTimer / CONFIG.vaccineDuration) * 100;
+                    document.getElementById('vaccine-bar').style.width = `${barPct}%`;
+                    if (rapidFireTimer <= 0) {
+                        rapidFireActive = false;
+                        document.getElementById('vaccine-indicator').classList.add('hidden');
+                    } else if (isMouseDown) {
+                        if (timestamp - lastRapidShot > 100) { 
+                            const prevWeapon = selectedWeapon;
+                            selectedWeapon = 'antibody'; fireWeapon(true); selectedWeapon = prevWeapon;
+                            lastRapidShot = timestamp;
+                        }
+                    }
+                }
+
+                // Charge Complement
+                if (complementCharge < 100) {
+                    complementCharge += CONFIG.complementChargeRate * dt;
+                    if (complementCharge > 100) complementCharge = 100;
+                }
+
+                // Heat Decay/Grow
+                if (tempHeatSpike > 0) tempHeatSpike -= dt * 0.1; // Decay extra heat slowly
+                if (infection > 0) infection -= dt * 0.3;
+                if (infection < 0) infection = 0;
+                if (isSepsis) infection += dt * 0.15;
+
+                updateUI();
+            }
+
+            ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
+            drawVignette(ctx);
+
+            entities.rbcs.forEach(rbc => { rbc.update(dt); rbc.draw(ctx); });
+
+            if (!gameActive) return requestAnimationFrame(gameLoop);
+
+            // Pass full pathogen list to updates for clumping checks
+            entities.pathogens.forEach(p => { p.update(dt, entities.pathogens); p.draw(ctx); });
+            entities.vaccines.forEach(v => { v.update(dt); v.draw(ctx); });
+            entities.projectiles.forEach(proj => { proj.update(dt); proj.draw(ctx); });
+            entities.phagocytes.forEach(p => { p.update(dt); p.draw(ctx); });
+            entities.particles.forEach(p => { p.update(dt); p.draw(ctx); });
+            entities.texts.forEach(t => { t.update(dt); t.draw(ctx); });
+
+            drawNeedle(ctx);
+            checkCollisions();
+
+            entities.pathogens = entities.pathogens.filter(e => !e.markedForDeletion);
+            entities.vaccines = entities.vaccines.filter(e => !e.markedForDeletion);
+            entities.projectiles = entities.projectiles.filter(e => !e.markedForDeletion);
+            entities.particles = entities.particles.filter(e => !e.markedForDeletion);
+            entities.texts = entities.texts.filter(e => e.life > 0);
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function checkCollisions() {
+            for (let proj of entities.projectiles) {
+                for (let path of entities.pathogens) {
+                    const dx = proj.pos.x - path.pos.x;
+                    const dy = proj.pos.y - path.pos.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < path.radius + proj.radius) {
+                        if (proj instanceof Antibody) {
+                            if (!proj.markedForDeletion) {
+                                proj.markedForDeletion = true;
+                                path.attachedAntibodies.push({}); 
+                                createExplosion(proj.pos.x, proj.pos.y, '#22d3ee', 4);
+                            }
+                        } else if (proj instanceof IgM) {
+                            if (!proj.markedForDeletion) {
+                                proj.markedForDeletion = true;
+                                // IgM adds 5 antibodies, guaranteeing neutralization
+                                for(let k=0; k<5; k++) path.attachedAntibodies.push({});
+                                createExplosion(proj.pos.x, proj.pos.y, '#06b6d4', 20);
+                            }
+                        }
+                    }
+                }
+                for (let v of entities.vaccines) {
+                    const dx = proj.pos.x - v.pos.x;
+                    const dy = proj.pos.y - v.pos.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < v.radius + proj.radius) {
+                        v.markedForDeletion = true;
+                        proj.markedForDeletion = true;
+                        createExplosion(v.pos.x, v.pos.y, '#3b82f6', 20);
+                        activateRapidFire();
+                    }
+                }
+            }
+
+            // AutoPhagocytes vs Pathogens
+            for (let phag of entities.phagocytes) {
+                if (phag.digesting > 0) continue; 
+                
+                for (let path of entities.pathogens) {
+                     if (path.frozen || path.beingEaten) continue;
+                     
+                     const dx = phag.pos.x - path.pos.x;
+                     const dy = phag.pos.y - path.pos.y;
+                     const dist = Math.sqrt(dx*dx + dy*dy);
+                     
+                     if (dist < phag.radius + path.radius - 5) {
+                         // Eat it
+                         path.beingEaten = true;
+                         phag.digesting = 2.0; // Digest time
+                         
+                         const bonus = path.attachedAntibodies.length * 50;
+                         score += 100 + bonus;
+                         if (path.isNeutralized) score += 200;
+                         
+                         infection = Math.max(0, infection - CONFIG.recoveryPerKill);
+                         createExplosion(path.pos.x, path.pos.y, path.color, 15);
+                         createExplosion(path.pos.x, path.pos.y, '#ffffff', 5);
+                         entities.texts.push(new FloatingText(phag.pos.x, phag.pos.y - 40, "DIGESTED", "#d8b4fe"));
+                         updateUI();
+                     }
+                }
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
